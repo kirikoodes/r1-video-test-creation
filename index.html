@@ -99,9 +99,11 @@
     <button id="btnStart" disabled>● REC</button>
     <button id="btnStop" disabled>■ STOP</button>
     <button id="btnSwitch" disabled>↺ Caméra</button>
+    <button id="btnLocal" style="display:none">🏠 PC local</button>
     <button id="btnUpload" style="display:none">☁ Récupérer</button>
   </div>
   <div id="linkRow"></div>
+  <input id="serverAddr" value="192.168.0.16:8765" style="display:none">
 </div>
 
 <script>
@@ -133,6 +135,8 @@ const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
 const btnSwitch = document.getElementById('btnSwitch');
 const btnUpload = document.getElementById('btnUpload');
+const btnLocal = document.getElementById('btnLocal');
+const serverAddr = document.getElementById('serverAddr');
 const recDot = document.getElementById('rec-dot');
 const linkRow = document.getElementById('linkRow');
 
@@ -287,7 +291,11 @@ function onRecordingStop() {
   a.style.left = '4px';
   document.getElementById('app').appendChild(a);
 
-  // Méthode de récupération n°2 : upload vers un hébergeur temporaire sans clé API (Litterbox/catbox.moe)
+  // Méthode de récupération n°2 : envoi direct vers le PC local (serveur maison, aucun compte/clé)
+  btnLocal.style.display = 'inline-block';
+  btnLocal.disabled = false;
+
+  // Méthode de récupération n°3 : upload vers un hébergeur temporaire sans clé API (Litterbox/catbox.moe)
   btnUpload.style.display = 'inline-block';
   btnUpload.disabled = false;
 
@@ -324,9 +332,41 @@ async function uploadToLitterbox() {
   btnUpload.disabled = false;
 }
 
+async function uploadToLocalServer() {
+  if (!lastBlob) return;
+  btnLocal.disabled = true;
+  linkRow.textContent = 'Envoi vers le PC local...';
+  const addr = (serverAddr.value || '').trim();
+  if (!addr) {
+    linkRow.textContent = 'Adresse du PC local manquante.';
+    btnLocal.disabled = false;
+    return;
+  }
+  try {
+    const resp = await fetch('http://' + addr + '/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': lastBlob.type || 'video/webm' },
+      body: lastBlob
+    });
+    const text = (await resp.text()).trim();
+    if (resp.ok && text.startsWith('OK:')) {
+      linkRow.textContent = 'Reçue sur le PC : ' + text.slice(3);
+      setStatus('Vidéo envoyée au PC local.');
+    } else {
+      linkRow.textContent = 'Échec envoi PC local: ' + text;
+      setStatus('ÉCHEC envoi PC local.');
+    }
+  } catch (err) {
+    linkRow.textContent = 'Échec envoi PC local (réseau/serveur éteint): ' + (err && err.message ? err.message : err);
+    setStatus('ÉCHEC envoi PC local.');
+  }
+  btnLocal.disabled = false;
+}
+
 btnStart.addEventListener('click', startRecording);
 btnStop.addEventListener('click', stopRecording);
 btnSwitch.addEventListener('click', switchCamera);
+btnLocal.addEventListener('click', uploadToLocalServer);
 btnUpload.addEventListener('click', uploadToLitterbox);
 
 window.addEventListener('load', initCamera);
