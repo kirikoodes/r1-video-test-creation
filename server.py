@@ -40,6 +40,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        # Sert la creation elle-meme en HTTP simple sur "/" ou "/index.html",
+        # pour eviter le blocage "mixed content" HTTPS->HTTP quand la creation
+        # est ouverte depuis GitHub Pages (HTTPS) et essaie de parler a ce
+        # serveur local en HTTP: en ouvrant directement cette adresse locale
+        # dans le r1, toute la page (et donc le fetch vers /upload) reste en
+        # HTTP, donc plus de blocage mixed content.
+        if self.path in ("/", "/index.html"):
+            index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+            try:
+                with open(index_path, "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self._cors_headers()
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            except OSError as e:
+                self.send_response(500)
+                self._cors_headers()
+                self.end_headers()
+                self.wfile.write(f"ERREUR lecture index.html: {e}".encode("utf-8"))
+                return
+
         self.send_response(200)
         self._cors_headers()
         self.send_header("Content-Type", "text/plain; charset=utf-8")

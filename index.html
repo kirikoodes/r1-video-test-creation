@@ -100,7 +100,6 @@
     <button id="btnStop" disabled>■ STOP</button>
     <button id="btnSwitch" disabled>↺ Caméra</button>
     <button id="btnLocal" style="display:none">🏠 PC local</button>
-    <button id="btnUpload" style="display:none">☁ Récupérer</button>
   </div>
   <div id="linkRow"></div>
   <input id="serverAddr" value="192.168.0.16:8765" style="display:none">
@@ -134,7 +133,6 @@ const playback = document.getElementById('playback');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
 const btnSwitch = document.getElementById('btnSwitch');
-const btnUpload = document.getElementById('btnUpload');
 const btnLocal = document.getElementById('btnLocal');
 const serverAddr = document.getElementById('serverAddr');
 const recDot = document.getElementById('rec-dot');
@@ -231,7 +229,6 @@ function startRecording() {
   if (!mediaStream) return;
   chunks = [];
   linkRow.textContent = '';
-  btnUpload.style.display = 'none';
   const mimeType = pickMimeType();
   try {
     mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream);
@@ -295,41 +292,8 @@ function onRecordingStop() {
   btnLocal.style.display = 'inline-block';
   btnLocal.disabled = false;
 
-  // Méthode de récupération n°3 : upload vers un hébergeur temporaire sans clé API (Litterbox/catbox.moe)
-  btnUpload.style.display = 'inline-block';
-  btnUpload.disabled = false;
-
   btnStart.disabled = false;
   btnSwitch.disabled = videoInputs.length < 2;
-}
-
-async function uploadToLitterbox() {
-  if (!lastBlob) return;
-  btnUpload.disabled = true;
-  linkRow.textContent = 'Envoi en cours...';
-  try {
-    const form = new FormData();
-    form.append('reqtype', 'fileToLitterbox');
-    form.append('time', '72h');
-    form.append('fileToUpload', lastBlob, 'r1-test-video.webm');
-    const resp = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
-      method: 'POST',
-      body: form
-    });
-    const text = (await resp.text()).trim();
-    if (resp.ok && text.startsWith('http')) {
-      linkRow.textContent = 'Lien (72h): ' + text;
-      storageSet('lastUploadUrl', text);
-      setStatus('Vidéo envoyée. Lien valable 72h.');
-    } else {
-      linkRow.textContent = 'Échec upload: ' + text;
-      setStatus('ÉCHEC upload distant.');
-    }
-  } catch (err) {
-    linkRow.textContent = 'Échec upload (réseau/CORS): ' + (err && err.message ? err.message : err);
-    setStatus('ÉCHEC upload distant.');
-  }
-  btnUpload.disabled = false;
 }
 
 async function uploadToLocalServer() {
@@ -367,7 +331,15 @@ btnStart.addEventListener('click', startRecording);
 btnStop.addEventListener('click', stopRecording);
 btnSwitch.addEventListener('click', switchCamera);
 btnLocal.addEventListener('click', uploadToLocalServer);
-btnUpload.addEventListener('click', uploadToLitterbox);
+
+// Bouton latéral (side button / PTT) du r1 : bascule start/stop en plus du bouton écran.
+window.addEventListener('sideClick', () => {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    stopRecording();
+  } else if (!btnStart.disabled) {
+    startRecording();
+  }
+});
 
 window.addEventListener('load', initCamera);
 </script>
