@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=240, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Test Vidéo Caméra</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 240px;
+    height: 282px;
+    background: #000;
+    color: #fff;
+    font-family: -apple-system, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    width: 240px;
+    height: 282px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    position: relative;
+  }
+  #status {
+    font-size: 10px;
+    text-align: center;
+    padding: 2px 4px;
+    height: 22px;
+    line-height: 11px;
+    overflow: hidden;
+    color: #ff5b00;
+  }
+  video, #playback {
+    width: 240px;
+    height: 200px;
+    background: #111;
+    object-fit: cover;
+  }
+  #controls {
+    width: 240px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  button {
+    background: #ff5b00;
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 8px 10px;
+  }
+  button:disabled {
+    background: #555;
+    color: #999;
+  }
+  #rec-dot {
+    display: none;
+    position: absolute;
+    top: 26px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: red;
+  }
+  a#dl {
+    color: #ff5b00;
+    font-size: 9px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="status">Initialisation...</div>
+  <div id="rec-dot"></div>
+  <video id="preview" autoplay playsinline muted></video>
+  <video id="playback" style="display:none" controls playsinline></video>
+  <div id="controls">
+    <button id="btnStart" disabled>● REC</button>
+    <button id="btnStop" disabled>■ STOP</button>
+  </div>
+</div>
+
+<script>
+// --- SDK r1 : canaux JS documentés (creations-sdk) ---
+// PluginMessageHandler : envoi de messages/logs vers l'hôte r1 (si présent)
+function pluginLog(msg) {
+  try {
+    if (window.PluginMessageHandler && typeof window.PluginMessageHandler.postMessage === 'function') {
+      window.PluginMessageHandler.postMessage(JSON.stringify({ message: msg }));
+    }
+  } catch (e) { /* pas d'hôte r1, on ignore */ }
+}
+
+// CreationStorageHandler : stockage persistant côté r1 (si présent)
+function storageSet(key, value) {
+  try {
+    if (window.CreationStorageHandler && typeof window.CreationStorageHandler.postMessage === 'function') {
+      window.CreationStorageHandler.postMessage(JSON.stringify({ action: 'set', key, value }));
+    }
+  } catch (e) {}
+}
+
+const statusEl = document.getElementById('status');
+const preview = document.getElementById('preview');
+const playback = document.getElementById('playback');
+const btnStart = document.getElementById('btnStart');
+const btnStop = document.getElementById('btnStop');
+const recDot = document.getElementById('rec-dot');
+
+let mediaStream = null;
+let mediaRecorder = null;
+let chunks = [];
+
+function setStatus(txt) {
+  statusEl.textContent = txt;
+  pluginLog('[test-video] ' + txt);
+}
+
+async function initCamera() {
+  setStatus('Demande accès caméra...');
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    preview.srcObject = mediaStream;
+    setStatus('Caméra OK. Prêt à enregistrer.');
+    btnStart.disabled = false;
+  } catch (err) {
+    setStatus('ÉCHEC getUserMedia: ' + (err && err.name ? err.name : err));
+  }
+}
+
+function pickMimeType() {
+  const candidates = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+    'video/mp4'
+  ];
+  for (const c of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) {
+      return c;
+    }
+  }
+  return '';
+}
+
+function startRecording() {
+  if (!mediaStream) return;
+  chunks = [];
+  const mimeType = pickMimeType();
+  try {
+    mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream);
+  } catch (err) {
+    setStatus('ÉCHEC MediaRecorder: ' + err.message);
+    return;
+  }
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+  mediaRecorder.onstop = onRecordingStop;
+  mediaRecorder.onerror = (e) => setStatus('Erreur recorder: ' + e.error);
+  mediaRecorder.start();
+  recDot.style.display = 'block';
+  setStatus('Enregistrement... (' + (mimeType || 'défaut') + ')');
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  recDot.style.display = 'none';
+  btnStop.disabled = true;
+}
+
+function onRecordingStop() {
+  const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
+  const sizeKB = Math.round(blob.size / 1024);
+  if (blob.size === 0) {
+    setStatus('ÉCHEC: 0 octet enregistré.');
+    btnStart.disabled = false;
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  preview.style.display = 'none';
+  playback.style.display = 'block';
+  playback.src = url;
+
+  setStatus('OK: ' + sizeKB + ' Ko capturés. Lecture ci-dessous.');
+  storageSet('lastRecordingSizeKB', String(sizeKB));
+
+  // Lien de téléchargement (utile si un navigateur desktop teste la page)
+  const a = document.createElement('a');
+  a.id = 'dl';
+  a.href = url;
+  a.download = 'r1-test-video.webm';
+  a.textContent = 'Télécharger le fichier';
+  a.style.position = 'absolute';
+  a.style.bottom = '2px';
+  a.style.left = '4px';
+  document.getElementById('app').appendChild(a);
+
+  btnStart.disabled = false;
+}
+
+btnStart.addEventListener('click', startRecording);
+btnStop.addEventListener('click', stopRecording);
+
+window.addEventListener('load', initCamera);
+</script>
+</body>
+</html>
