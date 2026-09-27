@@ -24,45 +24,51 @@
     position: relative;
   }
   #status {
-    font-size: 10px;
+    font-size: 9px;
     text-align: center;
     padding: 2px 4px;
-    height: 22px;
-    line-height: 11px;
+    height: 20px;
+    line-height: 10px;
     overflow: hidden;
     color: #ff5b00;
   }
   video, #playback {
     width: 240px;
-    height: 200px;
+    height: 172px;
     background: #111;
     object-fit: cover;
   }
   #controls {
     width: 240px;
-    height: 60px;
+    height: 90px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
+    padding: 4px;
   }
   button {
     background: #ff5b00;
     color: #000;
     border: none;
     border-radius: 6px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
-    padding: 8px 10px;
+    padding: 7px 8px;
   }
   button:disabled {
     background: #555;
     color: #999;
   }
+  #btnSwitch {
+    background: #333;
+    color: #ff5b00;
+  }
   #rec-dot {
     display: none;
     position: absolute;
-    top: 26px;
+    top: 24px;
     right: 6px;
     width: 8px;
     height: 8px;
@@ -72,6 +78,14 @@
   a#dl {
     color: #ff5b00;
     font-size: 9px;
+  }
+  #linkRow {
+    width: 240px;
+    text-align: center;
+    font-size: 8px;
+    color: #7fdcff;
+    word-break: break-all;
+    padding: 0 4px;
   }
 </style>
 </head>
@@ -84,7 +98,10 @@
   <div id="controls">
     <button id="btnStart" disabled>● REC</button>
     <button id="btnStop" disabled>■ STOP</button>
+    <button id="btnSwitch" disabled>↺ Caméra</button>
+    <button id="btnUpload" style="display:none">☁ Récupérer</button>
   </div>
+  <div id="linkRow"></div>
 </div>
 
 <script>
@@ -98,10 +115,12 @@ function pluginLog(msg) {
   } catch (e) { /* pas d'hôte r1, on ignore */ }
 }
 
-// CreationStorageHandler : stockage persistant côté r1 (si présent)
+// CreationStorageHandler : stockage persistant côté r1 (clé/valeur uniquement, pas de fichiers binaires)
 function storageSet(key, value) {
   try {
-    if (window.CreationStorageHandler && typeof window.CreationStorageHandler.postMessage === 'function') {
+    if (window.creationStorage && window.creationStorage.plain && typeof window.creationStorage.plain.setItem === 'function') {
+      window.creationStorage.plain.setItem(key, btoa(value));
+    } else if (window.CreationStorageHandler && typeof window.CreationStorageHandler.postMessage === 'function') {
       window.CreationStorageHandler.postMessage(JSON.stringify({ action: 'set', key, value }));
     }
   } catch (e) {}
@@ -112,27 +131,81 @@ const preview = document.getElementById('preview');
 const playback = document.getElementById('playback');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
+const btnSwitch = document.getElementById('btnSwitch');
+const btnUpload = document.getElementById('btnUpload');
 const recDot = document.getElementById('rec-dot');
+const linkRow = document.getElementById('linkRow');
 
 let mediaStream = null;
 let mediaRecorder = null;
 let chunks = [];
+let lastBlob = null;
+let videoInputs = [];
+let currentDeviceIndex = 0;
 
 function setStatus(txt) {
   statusEl.textContent = txt;
   pluginLog('[test-video] ' + txt);
 }
 
+async function listCameras() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    videoInputs = devices.filter(d => d.kind === 'videoinput');
+  } catch (e) {
+    videoInputs = [];
+  }
+}
+
+async function startStreamWithDevice(deviceId) {
+  const constraints = deviceId
+    ? { video: { deviceId: { exact: deviceId } }, audio: true }
+    : { video: true, audio: true };
+  return navigator.mediaDevices.getUserMedia(constraints);
+}
+
 async function initCamera() {
   setStatus('Demande accès caméra...');
   try {
+    // premier accès pour obtenir la permission, ce qui débloque les labels dans enumerateDevices()
     mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    await listCameras();
+
+    if (videoInputs.length > 1) {
+      // essaie de retrouver le deviceId du flux courant pour partir du bon index
+      const currentTrack = mediaStream.getVideoTracks()[0];
+      const currentSettings = currentTrack && currentTrack.getSettings ? currentTrack.getSettings() : {};
+      const idx = videoInputs.findIndex(d => d.deviceId === currentSettings.deviceId);
+      currentDeviceIndex = idx >= 0 ? idx : 0;
+      btnSwitch.disabled = false;
+    }
+
     preview.srcObject = mediaStream;
-    setStatus('Caméra OK. Prêt à enregistrer.');
+    setStatus('Caméra OK (' + videoInputs.length + ' détectée(s)). Prêt.');
     btnStart.disabled = false;
   } catch (err) {
     setStatus('ÉCHEC getUserMedia: ' + (err && err.name ? err.name : err));
   }
+}
+
+async function switchCamera() {
+  if (videoInputs.length < 2) return;
+  btnSwitch.disabled = true;
+  setStatus('Changement de caméra...');
+  currentDeviceIndex = (currentDeviceIndex + 1) % videoInputs.length;
+  const nextDevice = videoInputs[currentDeviceIndex];
+  try {
+    // coupe l'ancien flux avant d'en ouvrir un nouveau
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+    }
+    mediaStream = await startStreamWithDevice(nextDevice.deviceId);
+    preview.srcObject = mediaStream;
+    setStatus('Caméra: ' + (nextDevice.label || ('caméra ' + (currentDeviceIndex + 1))));
+  } catch (err) {
+    setStatus('ÉCHEC changement caméra: ' + (err && err.name ? err.name : err));
+  }
+  btnSwitch.disabled = false;
 }
 
 function pickMimeType() {
@@ -153,6 +226,8 @@ function pickMimeType() {
 function startRecording() {
   if (!mediaStream) return;
   chunks = [];
+  linkRow.textContent = '';
+  btnUpload.style.display = 'none';
   const mimeType = pickMimeType();
   try {
     mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream);
@@ -170,6 +245,7 @@ function startRecording() {
   setStatus('Enregistrement... (' + (mimeType || 'défaut') + ')');
   btnStart.disabled = true;
   btnStop.disabled = false;
+  btnSwitch.disabled = true;
 }
 
 function stopRecording() {
@@ -186,8 +262,10 @@ function onRecordingStop() {
   if (blob.size === 0) {
     setStatus('ÉCHEC: 0 octet enregistré.');
     btnStart.disabled = false;
+    btnSwitch.disabled = videoInputs.length < 2;
     return;
   }
+  lastBlob = blob;
   const url = URL.createObjectURL(blob);
   preview.style.display = 'none';
   playback.style.display = 'block';
@@ -196,7 +274,9 @@ function onRecordingStop() {
   setStatus('OK: ' + sizeKB + ' Ko capturés. Lecture ci-dessous.');
   storageSet('lastRecordingSizeKB', String(sizeKB));
 
-  // Lien de téléchargement (utile si un navigateur desktop teste la page)
+  // Lien de téléchargement local direct (méthode de récupération n°1 : fiable, hors-ligne)
+  const old = document.getElementById('dl');
+  if (old) old.remove();
   const a = document.createElement('a');
   a.id = 'dl';
   a.href = url;
@@ -207,11 +287,47 @@ function onRecordingStop() {
   a.style.left = '4px';
   document.getElementById('app').appendChild(a);
 
+  // Méthode de récupération n°2 : upload vers un hébergeur temporaire sans clé API (Litterbox/catbox.moe)
+  btnUpload.style.display = 'inline-block';
+  btnUpload.disabled = false;
+
   btnStart.disabled = false;
+  btnSwitch.disabled = videoInputs.length < 2;
+}
+
+async function uploadToLitterbox() {
+  if (!lastBlob) return;
+  btnUpload.disabled = true;
+  linkRow.textContent = 'Envoi en cours...';
+  try {
+    const form = new FormData();
+    form.append('reqtype', 'fileToLitterbox');
+    form.append('time', '72h');
+    form.append('fileToUpload', lastBlob, 'r1-test-video.webm');
+    const resp = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+      method: 'POST',
+      body: form
+    });
+    const text = (await resp.text()).trim();
+    if (resp.ok && text.startsWith('http')) {
+      linkRow.textContent = 'Lien (72h): ' + text;
+      storageSet('lastUploadUrl', text);
+      setStatus('Vidéo envoyée. Lien valable 72h.');
+    } else {
+      linkRow.textContent = 'Échec upload: ' + text;
+      setStatus('ÉCHEC upload distant.');
+    }
+  } catch (err) {
+    linkRow.textContent = 'Échec upload (réseau/CORS): ' + (err && err.message ? err.message : err);
+    setStatus('ÉCHEC upload distant.');
+  }
+  btnUpload.disabled = false;
 }
 
 btnStart.addEventListener('click', startRecording);
 btnStop.addEventListener('click', stopRecording);
+btnSwitch.addEventListener('click', switchCamera);
+btnUpload.addEventListener('click', uploadToLitterbox);
 
 window.addEventListener('load', initCamera);
 </script>
